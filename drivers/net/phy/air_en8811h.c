@@ -156,7 +156,8 @@ struct led {
 };
 
 struct en8811h_priv {
-	bool		fw_loaded;
+	u32		firmware_version;
+	bool		prev_lpa2500m;
 	struct led	led[EN8811H_LED_COUNT];
 };
 
@@ -351,7 +352,6 @@ static int air_write_buf(struct phy_device *phydev, u32 address,
 
 static int en8811h_load_firmware(struct phy_device *phydev)
 {
-	struct en8811h_priv *priv = phydev->priv;
 	struct device *dev = &phydev->mdio.dev;
 	const struct firmware *fw1, *fw2;
 	unsigned int pbus_value;
@@ -399,7 +399,6 @@ static int en8811h_load_firmware(struct phy_device *phydev)
 	if (ret < 0)
 		goto en8811h_load_firmware_out;
 
-	priv->fw_loaded = true;
 	ret = 0;
 
 en8811h_load_firmware_out:
@@ -741,8 +740,6 @@ static int en8811h_probe(struct phy_device *phydev)
 	priv->led[1].rules = AIR_DEFAULT_TRIGGER_LED1;
 	priv->led[2].rules = AIR_DEFAULT_TRIGGER_LED2;
 
-	priv->fw_loaded = false;
-
 	phydev->priv = priv;
 
 	/* MDIO_DEVS1/2 empty, so set mmds_present bits here */
@@ -756,9 +753,9 @@ static int en8811h_config_init(struct phy_device *phydev)
 	struct en8811h_priv *priv = phydev->priv;
 	struct device *dev = &phydev->mdio.dev;
 	int ret, pollret, reg_value;
-	unsigned int pbus_value;
+	u32 pbus_value;
 
-	if (!priv->fw_loaded)
+	if (!priv->firmware_version)
 		ret = en8811h_load_firmware(phydev);
 	else
 		ret = en8811h_restart_host(phydev);
@@ -774,11 +771,15 @@ static int en8811h_config_init(struct phy_device *phydev)
 	ret = air_buckpbus_reg_read(phydev, EN8811H_FW_VERSION, &pbus_value);
 	if (ret < 0)
 		return ret;
-	phydev_info(phydev, "MD32 firmware version: %08x\n", pbus_value);
 
-	if (pollret) {
+	if (pollret || !pbus_value) {
 		phydev_err(phydev, "Firmware not ready: 0x%x\n", reg_value);
 		return -ENODEV;
+	}
+
+	if (!priv->firmware_version) {
+		phydev_info(phydev, "MD32 firmware version: %08x\n", pbus_value);
+		priv->firmware_version = pbus_value;
 	}
 
 	/* Select mode 1, the only mode supported */
@@ -839,7 +840,7 @@ static int en8811h_get_features(struct phy_device *phydev)
 			       ARRAY_SIZE(phy_basic_ports_array),
 			       phydev->supported);
 
-	return  genphy_c45_pma_read_abilities(phydev);
+	return genphy_c45_pma_read_abilities(phydev);
 }
 
 static int en8811h_get_rate_matching(struct phy_device *phydev,
@@ -869,9 +870,12 @@ static int en8811h_config_aneg(struct phy_device *phydev)
 
 static int en8811h_read_status(struct phy_device *phydev)
 {
+	struct en8811h_priv *priv = phydev->priv;
 	unsigned int pbus_value;
+	bool lpa2500m;
 	int ret, val;
 
+	linkmode_zero(phydev->lp_advertising);
 	ret = genphy_update_link(phydev);
 	if (ret)
 		return ret;
@@ -893,8 +897,20 @@ static int en8811h_read_status(struct phy_device *phydev)
 			return ret;
 
 		phy_resolve_aneg_pause(phydev);
-	} else {
-		linkmode_zero(phydev->lp_advertising);
+	}
+
+	/* work around firmware bug which leads to EN8811H_2P5G_LPA_2GP5G bit
+	 * not being cleared when connecting with non-802.3bz capable host if
+	 * previously connected to a 802.3bz capable host.
+	 * clear relevant bit in vendor register if needed once the link is
+	 * down (and hence AN is going to restart with a new link partner).
+	 * Note that this can be racy when using polling!
+	 */
+	if (!phydev->autoneg_complete && !phydev->link && priv->prev_lpa2500m) {
+		air_buckpbus_reg_read(phydev, EN8811H_2P5G_LPA, &pbus_value);
+		pbus_value &= ~EN8811H_2P5G_LPA_2P5G;
+		air_buckpbus_reg_write(phydev, EN8811H_2P5G_LPA, pbus_value);
+		priv->prev_lpa2500m = false;
 	}
 
 	if (!phydev->link)
@@ -904,9 +920,14 @@ static int en8811h_read_status(struct phy_device *phydev)
 	ret = air_buckpbus_reg_read(phydev, EN8811H_2P5G_LPA, &pbus_value);
 	if (ret < 0)
 		return ret;
+	lpa2500m = !!(pbus_value & EN8811H_2P5G_LPA_2P5G);
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
-			 phydev->lp_advertising,
-			 pbus_value & EN8811H_2P5G_LPA_2P5G);
+			 phydev->lp_advertising, lpa2500m);
+
+	/* Remember that we had a link-partner advertising 2500M for
+	 * work-around above
+	 */
+	priv->prev_lpa2500m = lpa2500m;
 
 	/* Get real speed from vendor register */
 	val = phy_read(phydev, AIR_AUX_CTRL_STATUS);
@@ -922,6 +943,16 @@ static int en8811h_read_status(struct phy_device *phydev)
 	case AIR_AUX_CTRL_STATUS_SPEED_100:
 		phydev->speed = SPEED_100;
 		break;
+	}
+
+	/* BUG in PHY firmware:
+	 * MDIO_AN_10GBT_STAT_LP2_5G does not get set
+	 * Assume link partner advertised it if connected with 2500M
+	 */
+	if (priv->firmware_version < 0x24011202) {
+		linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
+				 phydev->lp_advertising,
+				 (phydev->speed == SPEED_2500));
 	}
 
 	/* Only supports full duplex */
