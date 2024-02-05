@@ -357,7 +357,7 @@ static int en8811h_load_firmware(struct phy_device *phydev)
 {
 	struct device *dev = &phydev->mdio.dev;
 	const struct firmware *fw1, *fw2;
-	unsigned int pbus_value;
+	u32 pbus_value;
 	int ret;
 
 	ret = request_firmware_direct(&fw1, EN8811H_MD32_DM, dev);
@@ -744,7 +744,7 @@ static int en8811h_hwmon_read(struct device *dev,
 {
 	struct phy_device *phydev = dev_get_drvdata(dev);
 	struct en8811h_priv *priv = phydev->priv;
-	unsigned int pbus_value;
+	u32 pbus_value;
 	int ret;
 
 	if (!priv->firmware_version)
@@ -952,7 +952,7 @@ static int en8811h_config_aneg(struct phy_device *phydev)
 static int en8811h_read_status(struct phy_device *phydev)
 {
 	struct en8811h_priv *priv = phydev->priv;
-	unsigned int pbus_value;
+	u32 pbus_value;
 	int ret, val;
 
 	ret = genphy_update_link(phydev);
