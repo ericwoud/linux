@@ -110,7 +110,7 @@
 #define   AIR_PHY_LED_BLINK_2500RX		BIT(11)
 
 /* Registers on BUCKPBUS */
-#define EN8811H_2P5G_LPA		0x3a04
+#define EN8811H_2P5G_LPA		0x3b30
 #define   EN8811H_2P5G_LPA_2P5G			BIT(0)
 
 #define EN8811H_TEMPERATURE		0x3b38
@@ -160,7 +160,6 @@ struct led {
 
 struct en8811h_priv {
 	u32		firmware_version;
-	bool		prev_lpa2500m;
 	struct led	led[EN8811H_LED_COUNT];
 };
 
@@ -979,24 +978,6 @@ static int en8811h_read_status(struct phy_device *phydev)
 		phy_resolve_aneg_pause(phydev);
 	}
 
-	/* work around firmware bug which leads to EN8811H_2P5G_LPA_2GP5G bit
-	 * not being cleared when connecting with non-802.3bz capable host if
-	 * previously connected to a 802.3bz capable host.
-	 * clear relevant bit in vendor register if needed once the link is
-	 * down (and hence AN is going to restart with a new link partner).
-	 * Note that this can be racy when using polling!
-	 */
-	if (!phydev->autoneg_complete && !phydev->link && priv->prev_lpa2500m) {
-		ret = air_buckpbus_reg_read(phydev, EN8811H_2P5G_LPA, &pbus_value);
-		if (ret < 0)
-			return ret;
-		pbus_value &= ~EN8811H_2P5G_LPA_2P5G;
-		ret = air_buckpbus_reg_write(phydev, EN8811H_2P5G_LPA, pbus_value);
-		if (ret < 0)
-			return ret;
-		priv->prev_lpa2500m = false;
-	}
-
 	if (!phydev->link)
 		return 0;
 
@@ -1007,9 +988,8 @@ static int en8811h_read_status(struct phy_device *phydev)
 	ret = air_buckpbus_reg_read(phydev, EN8811H_2P5G_LPA, &pbus_value);
 	if (ret < 0)
 		return ret;
-	priv->prev_lpa2500m = !!(pbus_value & EN8811H_2P5G_LPA_2P5G);
 	linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
-			 phydev->lp_advertising, priv->prev_lpa2500m);
+			 phydev->lp_advertising, (pbus_value & EN8811H_2P5G_LPA_2P5G));
 
 	/* Get real speed from vendor register */
 	val = phy_read(phydev, AIR_AUX_CTRL_STATUS);
@@ -1027,8 +1007,8 @@ static int en8811h_read_status(struct phy_device *phydev)
 		break;
 	}
 
-	/* BUG in PHY firmware: MDIO_AN_10GBT_STAT_LP2_5G does not get set.
-	 * Before version 24011202, EN8811H_2P5G_LPA_2P5G also not available.
+	/* BUG in PHY firmware: MDIO_AN_10GBT_STAT_LP2_5G does not get set
+	 * if running formware before version 24011202.
 	 * Assume link partner advertised it if connected with 2500M.
 	 */
 	if (priv->firmware_version < 0x24011202) {
