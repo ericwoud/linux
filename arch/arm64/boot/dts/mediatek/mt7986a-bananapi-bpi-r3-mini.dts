@@ -197,6 +197,7 @@
 		full-duplex;
 		pause;
 		airoha,pnswap-rx;
+		airoha,extradev-handle = <&en8811h_extradev22>;
 
 		leds {
 			#address-cells = <1>;
@@ -231,6 +232,7 @@
 		full-duplex;
 		pause;
 		airoha,pnswap-rx;
+		airoha,extradev-handle = <&en8811h_extradev23>;
 
 		leds {
 			#address-cells = <1>;
@@ -253,6 +255,18 @@
 				linux,default-trigger = "netdev";
 			};
 		};
+	};
+
+	/* phy14 address + 8 */
+	en8811h_extradev22: en8811h-extradev@22 {
+		compatible = "airoha,en8811h-extradev";
+		reg = <22>;
+	};
+
+	/* phy15 address + 8 */
+	en8811h_extradev23: en8811h-extradev@23 {
+		compatible = "airoha,en8811h-extradev";
+		reg = <23>;
 	};
 };
 
@@ -437,4 +451,3 @@
 		led-active-low;
 	};
 };
-
