@@ -14,7 +14,8 @@
 #include <linux/phy.h>
 #include <linux/firmware.h>
 #include <linux/property.h>
-#include <linux/wordpart.h>
+#define upper_16_bits(n) ((u16)((n) >> 16))
+#define lower_16_bits(n) ((u16)((n) & 0xffff))
 #include <asm/unaligned.h>
 
 #define EN8811H_PHY_ID		0x03a2a411
