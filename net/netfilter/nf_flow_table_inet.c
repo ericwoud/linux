@@ -69,6 +69,7 @@ static struct nf_flowtable_type flowtable_bridge = {
 	.family		= NFPROTO_BRIDGE,
 	.init		= nf_flow_table_init,
 	.setup		= nf_flow_table_offload_setup,
+	.action		= nf_flow_rule_bridge,
 	.free		= nf_flow_table_free,
 	.hook		= nf_flow_offload_bridge_hook,
 	.owner		= THIS_MODULE,
