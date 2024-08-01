@@ -362,6 +362,42 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 		ct->proto.tcp.seen[1].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
 	}
 
+	printk("EEEEE:DIR: %d\n", (int) dir);
+
+	printk("EEEEE:0: %d %d %d %d %d, %d [%d %d, %d %d] 0x%x %pM %pM\n",
+	       flow->tuplehash[0].tuple.xmit_type,
+	       flow->tuplehash[0].tuple.mtu,
+	       flow->tuplehash[0].tuple.iifidx,
+	       flow->tuplehash[0].tuple.out.ifidx,
+	       flow->tuplehash[0].tuple.out.hw_ifidx,
+
+	       flow->tuplehash[0].tuple.encap_num,
+	       flow->tuplehash[0].tuple.encap[0].id,
+	       flow->tuplehash[0].tuple.encap[0].proto,
+	       flow->tuplehash[0].tuple.encap[1].id,
+	       flow->tuplehash[0].tuple.encap[1].proto,
+	       flow->tuplehash[0].tuple.in_vlan_ingress,
+
+	       flow->tuplehash[0].tuple.out.h_source,
+	       flow->tuplehash[0].tuple.out.h_dest);
+
+	printk("EEEEE:1: %d %d %d %d %d, %d [%d %d, %d %d] 0x%x %pM %pM\n",
+	       flow->tuplehash[1].tuple.xmit_type,
+	       flow->tuplehash[1].tuple.mtu,
+	       flow->tuplehash[1].tuple.iifidx,
+	       flow->tuplehash[1].tuple.out.ifidx,
+	       flow->tuplehash[1].tuple.out.hw_ifidx,
+
+	       flow->tuplehash[1].tuple.encap_num,
+	       flow->tuplehash[1].tuple.encap[0].id,
+	       flow->tuplehash[1].tuple.encap[0].proto,
+	       flow->tuplehash[1].tuple.encap[1].id,
+	       flow->tuplehash[1].tuple.encap[1].proto,
+	       flow->tuplehash[1].tuple.in_vlan_ingress,
+
+	       flow->tuplehash[1].tuple.out.h_source,
+	       flow->tuplehash[1].tuple.out.h_dest);
+
 	__set_bit(NF_FLOW_HW_BIDIRECTIONAL, &flow->flags);
 	ret = flow_offload_add(flowtable, flow);
 	if (ret < 0)
