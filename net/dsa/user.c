@@ -773,6 +773,8 @@ static int dsa_user_port_obj_add(struct net_device *dev, const void *ctx,
 	case SWITCHDEV_OBJ_ID_PORT_VLAN:
 		if (dsa_port_offloads_bridge_port(dp, obj->orig_dev))
 			err = dsa_user_vlan_add(dev, obj, extack);
+		else if (obj->flags & SWITCHDEV_F_NO_FOREIGN)
+			err = -EOPNOTSUPP;
 		else
 			err = dsa_user_host_vlan_add(dev, obj, extack);
 		break;
