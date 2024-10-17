@@ -1839,6 +1839,7 @@ enum netdev_reg_state {
  *
  *	@vlan_info:	VLAN info
  *	@dsa_ptr:	dsa specific data
+ *	@dsa_foreign_vlan:	Counter, number of dsa foreign vlans added
  *	@tipc_ptr:	TIPC specific data
  *	@atalk_ptr:	AppleTalk link
  *	@ip_ptr:	IPv4 specific data
@@ -2214,6 +2215,7 @@ struct net_device {
 #endif
 #if IS_ENABLED(CONFIG_NET_DSA)
 	struct dsa_port		*dsa_ptr;
+	unsigned int		dsa_foreign_vlan;
 #endif
 #if IS_ENABLED(CONFIG_TIPC)
 	struct tipc_bearer __rcu *tipc_ptr;
@@ -5133,6 +5135,15 @@ static inline bool netif_is_lag_master(const struct net_device *dev)
 static inline bool netif_is_lag_port(const struct net_device *dev)
 {
 	return netif_is_bond_slave(dev) || netif_is_team_port(dev);
+}
+
+static inline bool netif_has_dsa_foreign_vlan(const struct net_device *dev)
+{
+#if IS_ENABLED(CONFIG_NET_DSA)
+	return !!dev->dsa_foreign_vlan;
+#else
+	return false;
+#endif
 }
 
 static inline bool netif_is_rxfh_configured(const struct net_device *dev)

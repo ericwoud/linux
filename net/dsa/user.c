@@ -737,6 +737,8 @@ static int dsa_user_host_vlan_add(struct net_device *dev,
 		return 0;
 	}
 
+	obj->orig_dev->dsa_foreign_vlan++;
+
 	vlan = *SWITCHDEV_OBJ_PORT_VLAN(obj);
 
 	/* Even though drivers often handle CPU membership in special ways,
@@ -823,6 +825,8 @@ static int dsa_user_host_vlan_del(struct net_device *dev,
 
 	if (dsa_port_skip_vlan_configuration(dp))
 		return 0;
+
+	obj->orig_dev->dsa_foreign_vlan--;
 
 	vlan = SWITCHDEV_OBJ_PORT_VLAN(obj);
 
