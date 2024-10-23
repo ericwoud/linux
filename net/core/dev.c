@@ -746,6 +746,23 @@ static int dev_fill_forward_path_common(struct net_device_path_ctx *ctx,
 
 	return ret;
 }
+bool dev_switchdev_ingress_vlan(const struct net_device *dev)
+{
+	struct net_device_path_ctx ctx = {
+		.dev	= dev,
+	};
+	const struct net_device *br_dev;
+
+	br_dev = netdev_master_upper_dev_get_rcu((struct net_device *)ctx.dev);
+	if (!br_dev || !br_dev->netdev_ops->ndo_fill_forward_path)
+		return -1;
+
+	if (br_dev->netdev_ops->ndo_fill_forward_path(&ctx, NULL) < 0)
+		return -1;
+
+	return !!ctx.num_vlans;
+}
+EXPORT_SYMBOL_GPL(dev_switchdev_ingress_vlan);
 
 int dev_fill_bridge_path(struct net_device_path_ctx *ctx,
 			 struct net_device_path_stack *stack)
