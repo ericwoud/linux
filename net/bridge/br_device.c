@@ -397,6 +397,20 @@ static int br_fill_forward_path(struct net_device_path_ctx *ctx,
 
 		src = br_port_get_rcu(ctx->dev);
 
+		if (!path) {
+			/* only check for switchdev egress */
+			struct net_device_path newpath = {
+				.bridge.vlan_mode = DEV_PATH_BR_VLAN_KEEP,
+				.bridge.vlan_id = ctx->vlan[0].id,
+			};
+			
+			if (br_vlan_fill_forward_path_mode(br, src, &newpath))
+				return -1;
+			ctx->num_vlans = (newpath.bridge.vlan_mode ==
+					  DEV_PATH_BR_VLAN_UNTAG_HW) ? 1 : 0;
+			return 0;
+		}
+
 		br_vlan_fill_forward_path_pvid(br, src, ctx, path);
 	} else {
 		br = netdev_priv(ctx->dev);
