@@ -84,6 +84,7 @@ struct nft_forward_info {
 		__u16	id;
 		__be16	proto;
 	} encap[NF_FLOW_TABLE_ENCAP_MAX];
+	u16 bridge_vid;
 	u8 num_encaps;
 	u8 ingress_vlans;
 	u8 h_source[ETH_ALEN];
@@ -162,6 +163,7 @@ static void nft_dev_path_info(const struct net_device_path_stack *stack,
 			case DEV_PATH_BR_VLAN_KEEP:
 				break;
 			}
+			info->bridge_vid = path->bridge.vlan_id;
 			info->xmit_type = FLOW_OFFLOAD_XMIT_DIRECT;
 			break;
 		default:
@@ -252,6 +254,7 @@ static int nft_dev_fill_bridge_path(struct flow_offload *flow,
 	ether_addr_copy(th[dir].tuple.out.h_source, src_ha);
 	ether_addr_copy(th[dir].tuple.out.h_dest, dst_ha);
 	th[dir].tuple.out.ifidx = info.outdev->ifindex;
+	th[dir].tuple.out.bridge_vid = info.bridge_vid;
 	th[dir].tuple.xmit_type = FLOW_OFFLOAD_XMIT_DIRECT;
 
 	return 0;
@@ -344,6 +347,7 @@ static void nft_dev_forward_path(struct nf_flow_route *route,
 		memcpy(route->tuple[dir].out.h_source, info.h_source, ETH_ALEN);
 		memcpy(route->tuple[dir].out.h_dest, info.h_dest, ETH_ALEN);
 		route->tuple[dir].out.ifindex = info.outdev->ifindex;
+		route->tuple[dir].out.bridge_vid = info.bridge_vid;
 		route->tuple[dir].xmit_type = info.xmit_type;
 	}
 }
