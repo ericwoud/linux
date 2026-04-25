@@ -199,7 +199,7 @@ int nf_conntrack_icmpv6_error(struct nf_conn *tmpl,
 
 	if (state->hook == NF_INET_PRE_ROUTING &&
 	    state->net->ct.sysctl_checksum &&
-	    nf_ip6_checksum(skb, state->hook, dataoff, IPPROTO_ICMPV6)) {
+	    nf_checksum(skb, state->hook, dataoff, IPPROTO_ICMPV6, AF_INET6)) {
 		icmpv6_error_log(skb, state, "ICMPv6 checksum failed");
 		return -NF_ACCEPT;
 	}
