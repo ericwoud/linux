@@ -92,6 +92,7 @@ static int
 mtk_flow_get_wdma_info(struct net_device *dev, const u8 *addr, struct mtk_wdma_info *info)
 {
 	struct net_device_path_stack stack;
+	struct net_device_path_ctx ctx;
 	struct net_device_path *path;
 	int err;
 
@@ -102,7 +103,11 @@ mtk_flow_get_wdma_info(struct net_device *dev, const u8 *addr, struct mtk_wdma_i
 		return -1;
 
 	rcu_read_lock();
-	err = dev_fill_forward_path(dev, addr, &stack);
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.dev	= dev;
+	memcpy(ctx.daddr, addr, sizeof(ctx.daddr));
+	stack.num_paths = 0;
+	err = dev_fill_forward_path(&ctx, &stack);
 	rcu_read_unlock();
 	if (err)
 		return err;
