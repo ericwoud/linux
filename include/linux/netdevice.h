@@ -3432,6 +3432,8 @@ static inline struct net_device_path *dev_fwd_path(struct net_device_path_stack 
 	return &stack->path[k];
 }
 
+int dev_fill_bridge_path(struct net_device_path_ctx *ctx,
+			 struct net_device_path_stack *stack);
 int dev_fill_forward_path(struct net_device_path_ctx *ctx,
 			  struct net_device_path_stack *stack);
 struct net_device *dev_get_by_name(struct net *net, const char *name);
