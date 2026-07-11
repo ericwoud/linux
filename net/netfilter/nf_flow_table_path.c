@@ -44,11 +44,13 @@ static bool nft_is_valid_ether_device(const struct net_device *dev)
 }
 
 static void nft_dev_fill_forward_path_init(struct net_device_path_ctx *ctx,
+					   struct net_device_path_stack *stack,
 					   const struct net_device *dev, const u8 *daddr)
 {
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->dev	= dev;
 	memcpy(ctx->daddr, daddr, sizeof(ctx->daddr));
+	stack->num_paths = 0;
 }
 
 static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
@@ -81,7 +83,7 @@ static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
 	if (!(nud_state & NUD_VALID))
 		return -1;
 out:
-	nft_dev_fill_forward_path_init(&ctx, dev, ha);
+	nft_dev_fill_forward_path_init(&ctx, stack, dev, ha);
 
 	return dev_fill_forward_path(&ctx, stack);
 }
@@ -384,28 +386,52 @@ static int nft_dev_fill_bridge_path(struct flow_offload *flow,
 				    unsigned char *src_ha,
 				    unsigned char *dst_ha)
 {
+	struct flow_offload_tuple *other_tuple = &flow->tuplehash[!dir].tuple;
 	struct flow_offload_tuple *this_tuple = &flow->tuplehash[dir].tuple;
 	struct net_device_path_stack stack;
 	struct nft_forward_info info = {};
 	struct net_device_path_ctx ctx;
 	int i, j = 0;
 
-	nft_dev_fill_forward_path_init(&ctx, dev, dst_ha);
+	nft_dev_fill_forward_path_init(&ctx, &stack, dev, dst_ha);
 
-	if (dev_fill_forward_path(&ctx, &stack) < 0 ||
+	for (i = this_tuple->encap_num - 1; i >= 0 ; i--) {
+		if (info.num_encaps >= NF_FLOW_TABLE_ENCAP_MAX)
+			return -1;
+
+		if (this_tuple->in_vlan_ingress & BIT(i))
+			continue;
+
+		info.encap[info.num_encaps].id = this_tuple->encap[i].id;
+		info.encap[info.num_encaps].proto = this_tuple->encap[i].proto;
+		info.num_encaps++;
+
+		if (this_tuple->encap[i].proto == htons(ETH_P_PPP_SES))
+			continue;
+
+		if (ctx.num_vlans >= NET_DEVICE_PATH_VLAN_MAX)
+			return -1;
+		ctx.vlan[ctx.num_vlans].id = this_tuple->encap[i].id;
+		ctx.vlan[ctx.num_vlans].proto = this_tuple->encap[i].proto;
+		ctx.num_vlans++;
+	}
+
+	if (dev_fill_bridge_path(&ctx, &stack) < 0 ||
 	    nft_dev_path_info(&stack, &info, dst_ha, &ft->data) < 0)
 		return -1;
 
 	if (!nft_flowtable_find_dev(info.indev, ft))
 		return -1;
 
-	this_tuple->iifidx = info.indev->ifindex;
+	other_tuple->iifidx = info.indev->ifindex;
 	for (i = info.num_encaps - 1; i >= 0; i--) {
-		this_tuple->encap[j].id = info.encap[i].id;
-		this_tuple->encap[j].proto = info.encap[i].proto;
+		other_tuple->encap[j].id = info.encap[i].id;
+		other_tuple->encap[j].proto = info.encap[i].proto;
+		if (info.ingress_vlans & BIT(i))
+			other_tuple->in_vlan_ingress |= BIT(j);
 		j++;
 	}
-	this_tuple->encap_num = info.num_encaps;
+	other_tuple->encap_num = info.num_encaps;
 
 	ether_addr_copy(this_tuple->out.h_source, src_ha);
 	ether_addr_copy(this_tuple->out.h_dest, dst_ha);
@@ -422,15 +448,42 @@ int nft_flow_bridge(struct flow_offload *flow, const struct nft_pktinfo *pkt,
 	const struct net_device *outdev = nft_out(pkt);
 	const struct net_device *indev = nft_in(pkt);
 	struct ethhdr *eth = eth_hdr(pkt->skb);
-	int err;
+	int err, i = 0;
 
-	err = nft_dev_fill_bridge_path(flow, ft, dir, indev,
-				       eth->h_source, eth->h_dest);
-	if (err < 0)
-		return err;
+	if (skb_vlan_tag_present(pkt->skb)) {
+		other_tuple->encap[i].id = skb_vlan_tag_get(pkt->skb);
+		other_tuple->encap[i].proto = pkt->skb->vlan_proto;
+		i++;
+	}
+
+	switch (eth_hdr(pkt->skb)->h_proto) {
+	case htons(ETH_P_8021Q): {
+		struct vlan_hdr *vhdr = (struct vlan_hdr *)(skb_mac_header(pkt->skb)
+					 + sizeof(struct ethhdr));
+		other_tuple->encap[i].id = ntohs(vhdr->h_vlan_TCI);
+		other_tuple->encap[i].proto = htons(ETH_P_8021Q);
+		i++;
+		break;
+	}
+	case htons(ETH_P_PPP_SES): {
+		struct pppoe_hdr *phdr = (struct pppoe_hdr *)(skb_mac_header(pkt->skb)
+					  + sizeof(struct ethhdr));
+
+		other_tuple->encap[i].id = ntohs(phdr->sid);
+		other_tuple->encap[i].proto = htons(ETH_P_PPP_SES);
+		i++;
+		break;
+	}
+	}
+	other_tuple->encap_num = i;
 
 	err = nft_dev_fill_bridge_path(flow, ft, !dir, outdev,
 				       eth->h_dest, eth->h_source);
+	if (err < 0)
+		return err;
+
+	err = nft_dev_fill_bridge_path(flow, ft, dir, indev,
+				       eth->h_source, eth->h_dest);
 	if (err < 0)
 		return err;
 

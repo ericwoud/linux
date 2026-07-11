@@ -746,8 +746,6 @@ int dev_fill_bridge_path(struct net_device_path_ctx *ctx,
 	const struct net_device *last_dev, *br_dev;
 	struct net_device_path *path;
 
-	stack->num_paths = 0;
-
 	if (!ctx->dev || !netif_is_bridge_port(ctx->dev))
 		return -1;
 
@@ -778,7 +776,6 @@ int dev_fill_forward_path(struct net_device_path_ctx *ctx,
 	struct net_device_path *path;
 	int ret = 0;
 
-	stack->num_paths = 0;
 	while (ctx->dev && ctx->dev->netdev_ops->ndo_fill_forward_path) {
 		last_dev = ctx->dev;
 		path = dev_fwd_path(stack);
