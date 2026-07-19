@@ -367,36 +367,107 @@ err_dst_release:
 }
 EXPORT_SYMBOL_GPL(nft_flow_route);
 
+static int nft_dev_prefill_bridge_path(struct flow_offload *flow,
+				    struct nft_flowtable *ft,
+				    enum ip_conntrack_dir dir,
+				    const struct net_device *indev,
+				    const struct net_device *outdev,
+				    struct sk_buff *skb,
+				    struct net_device_path_ctx *ctx,
+				    struct nft_forward_info *info,
+				    unsigned char *src_ha,
+				    unsigned char *dst_ha)
+{
+	struct net_device_path_stack stack;
+	int i = 0, j = 0;
+
+	switch (eth_hdr(skb)->h_proto) {
+	case htons(ETH_P_PPP_SES): {
+		struct pppoe_hdr *phdr = (struct pppoe_hdr *)(skb_mac_header(skb)
+					  + sizeof(struct ethhdr));
+
+		info[dir].encap[i].id = ntohs(phdr->sid);
+		info[dir].encap[i].proto = htons(ETH_P_PPP_SES);
+		i++;
+		break;
+	}
+	case htons(ETH_P_8021Q): {
+		struct vlan_hdr *vhdr = (struct vlan_hdr *)(skb_mac_header(skb)
+					 + sizeof(struct ethhdr));
+		info[dir].encap[i].id = ntohs(vhdr->h_vlan_TCI);
+		info[dir].encap[i].proto = htons(ETH_P_8021Q);
+		i++;
+		ctx[dir].vlan[j].id = ntohs(vhdr->h_vlan_TCI);
+		ctx[dir].vlan[j].proto = htons(ETH_P_8021Q);
+		j++;
+		break;
+	}
+	}
+
+	if (skb_vlan_tag_present(skb)) {
+		info[dir].encap[i].id = skb_vlan_tag_get(skb);
+		info[dir].encap[i].proto = skb->vlan_proto;
+		i++;
+		ctx[dir].vlan[j].id = skb_vlan_tag_get(skb);
+		ctx[dir].vlan[j].proto = skb->vlan_proto;
+		j++;
+	}
+	info[dir].num_encaps = i;
+	ctx[dir].num_vlans = j;
+
+	if (dev_fill_bridge_path(outdev, src_ha, &ctx[dir], &stack) < 0 ||
+	    nft_dev_path_info(&stack, &info[dir], src_ha, &ft->data) < 0)
+		return -1;
+
+// Check info[dir].indev == indev
+
+	memcpy(&ctx[!dir].vlan, &ctx[dir].vlan, sizeof(ctx[0].vlan));
+	ctx[!dir].num_vlans = ctx[dir].num_vlans;
+	memcpy(&info[!dir].encap, &info[dir].encap, sizeof(info[0].encap));
+	info[!dir].num_encaps  = info[dir].num_encaps;
+
+	if (dev_fill_bridge_path(indev, dst_ha, &ctx[!dir], &stack) < 0 ||
+	    nft_dev_path_info(&stack, &info[!dir], dst_ha, &ft->data) < 0)
+		return -1;
+
+// Check info[!dir].indev == outdev
+
+	return 0;
+}
+
 static int nft_dev_fill_bridge_path(struct flow_offload *flow,
 				    struct nft_flowtable *ft,
 				    enum ip_conntrack_dir dir,
 				    const struct net_device *dev,
+				    struct net_device_path_ctx *ctx,
+				    struct nft_forward_info *info,
 				    unsigned char *src_ha,
 				    unsigned char *dst_ha)
 {
 	struct flow_offload_tuple *this_tuple = &flow->tuplehash[dir].tuple;
 	struct net_device_path_stack stack;
-	struct nft_forward_info info = {};
 	int i, j = 0;
 
-	if (dev_fill_forward_path(dev, dst_ha, &stack) < 0 ||
-	    nft_dev_path_info(&stack, &info, dst_ha, &ft->data) < 0)
+	if (dev_fill_forward_path_continue(ctx, &stack) < 0 ||
+	    nft_dev_path_info(&stack, info, dst_ha, &ft->data) < 0)
 		return -1;
 
-	if (!nft_flowtable_find_dev(info.indev, ft))
+	if (!nft_flowtable_find_dev(info->indev, ft))
 		return -1;
 
-	this_tuple->iifidx = info.indev->ifindex;
-	for (i = info.num_encaps - 1; i >= 0; i--) {
-		this_tuple->encap[j].id = info.encap[i].id;
-		this_tuple->encap[j].proto = info.encap[i].proto;
+	this_tuple->iifidx = info->indev->ifindex;
+	for (i = info->num_encaps - 1; i >= 0; i--) {
+		this_tuple->encap[j].id = info->encap[i].id;
+		this_tuple->encap[j].proto = info->encap[i].proto;
+		if (info->ingress_vlans & BIT(i))
+			this_tuple->in_vlan_ingress |= BIT(j);
 		j++;
 	}
-	this_tuple->encap_num = info.num_encaps;
+	this_tuple->encap_num = info->num_encaps;
 
 	ether_addr_copy(this_tuple->out.h_source, src_ha);
 	ether_addr_copy(this_tuple->out.h_dest, dst_ha);
-	this_tuple->needs_gso_segment = info.needs_gso_segment;
+	this_tuple->needs_gso_segment = info->needs_gso_segment;
 	this_tuple->xmit_type = FLOW_OFFLOAD_XMIT_DIRECT;
 
 	return 0;
@@ -410,14 +481,21 @@ int nft_flow_bridge(struct flow_offload *flow, const struct nft_pktinfo *pkt,
 	const struct net_device *outdev = nft_out(pkt);
 	const struct net_device *indev = nft_in(pkt);
 	struct ethhdr *eth = eth_hdr(pkt->skb);
+	struct net_device_path_ctx ctx[2] = {};
+	struct nft_forward_info info[2] = {};
 	int err;
 
-	err = nft_dev_fill_bridge_path(flow, ft, dir, indev,
+	err = nft_dev_prefill_bridge_path(flow, ft, dir, indev, outdev, pkt->skb, ctx, info,
 				       eth->h_source, eth->h_dest);
 	if (err < 0)
 		return err;
 
-	err = nft_dev_fill_bridge_path(flow, ft, !dir, outdev,
+	err = nft_dev_fill_bridge_path(flow, ft, dir, indev, &ctx[dir], &info[dir],
+				       eth->h_source, eth->h_dest);
+	if (err < 0)
+		return err;
+
+	err = nft_dev_fill_bridge_path(flow, ft, !dir, outdev, &ctx[!dir], &info[!dir],
 				       eth->h_dest, eth->h_source);
 	if (err < 0)
 		return err;
